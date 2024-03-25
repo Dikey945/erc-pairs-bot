@@ -1,6 +1,6 @@
-# Ethereum Cryptocurrency Bot
+# Ethereum Uniswap Pairs Monitoring Bot
 
-This project is a cryptocurrency bot, specifically for Ethereum, built using NestJS, a Node.js framework. The bot interacts with the Ethereum blockchain and other services to monitor and analyze token transactions.
+This project is a cryptocurrency bot, specifically for Ethereum, built using NestJS, a Node.js framework. The bot interacts with the Ethereum blockchain and other services to monitor and analyze token pairs on Uniswap.
 
 ## Key Features
 
