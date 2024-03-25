@@ -1,0 +1,23 @@
+version: '3.9'
+services:
+  smart-money-bot:
+    image: dikey947/pairs-bot:1.0
+    restart: always
+    env_file:
+      - .env
+    command: yarn start:dev
+    ports:
+      - '50054:50054'
+    depends_on:
+      - postgres
+  postgres:
+    image: postgres:14.5-alpine
+    restart: always
+    env_file:
+      - database.env
+    ports:
+      - '5434:5432'
+    volumes:
+      - postgres_dat:/var/lib/postgresql/data
+volumes:
+  postgres_dat:
