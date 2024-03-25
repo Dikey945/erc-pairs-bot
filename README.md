@@ -1,73 +1,36 @@
-<p align="center">
-  <a href="http://nestjs.com/" target="blank"><img src="https://nestjs.com/img/logo-small.svg" width="200" alt="Nest Logo" /></a>
-</p>
+# Ethereum Cryptocurrency Bot
 
-[circleci-image]: https://img.shields.io/circleci/build/github/nestjs/nest/master?token=abc123def456
-[circleci-url]: https://circleci.com/gh/nestjs/nest
+This project is a cryptocurrency bot, specifically for Ethereum, built using NestJS, a Node.js framework. The bot interacts with the Ethereum blockchain and other services to monitor and analyze token transactions.
 
-  <p align="center">A progressive <a href="http://nodejs.org" target="_blank">Node.js</a> framework for building efficient and scalable server-side applications.</p>
-    <p align="center">
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/v/@nestjs/core.svg" alt="NPM Version" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/l/@nestjs/core.svg" alt="Package License" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/dm/@nestjs/common.svg" alt="NPM Downloads" /></a>
-<a href="https://circleci.com/gh/nestjs/nest" target="_blank"><img src="https://img.shields.io/circleci/build/github/nestjs/nest/master" alt="CircleCI" /></a>
-<a href="https://coveralls.io/github/nestjs/nest?branch=master" target="_blank"><img src="https://coveralls.io/repos/github/nestjs/nest/badge.svg?branch=master#9" alt="Coverage" /></a>
-<a href="https://discord.gg/G7Qnnhy" target="_blank"><img src="https://img.shields.io/badge/discord-online-brightgreen.svg" alt="Discord"/></a>
-<a href="https://opencollective.com/nest#backer" target="_blank"><img src="https://opencollective.com/nest/backers/badge.svg" alt="Backers on Open Collective" /></a>
-<a href="https://opencollective.com/nest#sponsor" target="_blank"><img src="https://opencollective.com/nest/sponsors/badge.svg" alt="Sponsors on Open Collective" /></a>
-  <a href="https://paypal.me/kamilmysliwiec" target="_blank"><img src="https://img.shields.io/badge/Donate-PayPal-ff3f59.svg"/></a>
-    <a href="https://opencollective.com/nest#sponsor"  target="_blank"><img src="https://img.shields.io/badge/Support%20us-Open%20Collective-41B883.svg" alt="Support us"></a>
-  <a href="https://twitter.com/nestframework" target="_blank"><img src="https://img.shields.io/twitter/follow/nestframework.svg?style=social&label=Follow"></a>
-</p>
-  <!--[![Backers on Open Collective](https://opencollective.com/nest/backers/badge.svg)](https://opencollective.com/nest#backer)
-  [![Sponsors on Open Collective](https://opencollective.com/nest/sponsors/badge.svg)](https://opencollective.com/nest#sponsor)-->
+## Key Features
 
-## Description
+1. **Pair Creation Listener**: Listens for 'PairCreated' events on the Ethereum blockchain. When a new pair is created, it fetches the contract details and extracts relevant information.
 
-[Nest](https://github.com/nestjs/nest) framework TypeScript starter repository.
+2. **Token Monitoring**: Monitors tokens for significant events such as price changes and potential 'rug pulls'.
 
-## Installation
+3. **Scheduled Tasks**: Runs several scheduled tasks to post top gainers, check and fill initial token prices, check for rug pulls, and send daily reports.
 
-```bash
-$ yarn install
-```
+4. **Telegram Integration**: Integrates with Telegram to send notifications about new pairs and other significant events.
 
-## Running the app
+5. **Data Persistence**: Uses TypeORM for data persistence, storing information about tokens and their events in a database.
 
-```bash
-# development
-$ yarn run start
+6. **Error Handling and Retries**: Includes robust error handling, including a function to retry operations with exponential backoff to handle temporary issues.
 
-# watch mode
-$ yarn run start:dev
+## Tech Stack
 
-# production mode
-$ yarn run start:prod
-```
+- TypeScript
+- NestJS
+- Node.js
+- TypeORM
+- PostgreSQL
+- Telegraf
 
-## Test
+## Getting Started
 
-```bash
-# unit tests
-$ yarn run test
+1. Clone the repository
+2. Install dependencies using `yarn install`
+3. Start the bot using `yarn start`
 
-# e2e tests
-$ yarn run test:e2e
+## Docker
 
-# test coverage
-$ yarn run test:cov
-```
-
-## Support
-
-Nest is an MIT-licensed open source project. It can grow thanks to the sponsors and support by the amazing backers. If you'd like to join them, please [read more here](https://docs.nestjs.com/support).
-
-## Stay in touch
-
-- Author - [Kamil Myśliwiec](https://kamilmysliwiec.com)
-- Website - [https://nestjs.com](https://nestjs.com/)
-- Twitter - [@nestframework](https://twitter.com/nestframework)
-
-## License
-
-Nest is [MIT licensed](LICENSE).
+This project includes a Dockerfile and docker-compose for containerization.
