@@ -1,5 +1,5 @@
 import {forwardRef, Inject, Injectable, Logger, OnModuleInit} from '@nestjs/common';
-import { ethers } from 'ethers';
+import {ethers, Log} from 'ethers';
 import { WalletBotService } from '../wallet-bot/wallet-bot.service';
 import { uniswapAbi, unverifiedTokenFakeABI } from './utils/uniswap.abi';
 import { ConfigService } from '@nestjs/config';
@@ -13,23 +13,29 @@ import { Cron } from '@nestjs/schedule';
 import {Token} from '../entities/token.entity';
 import {Between, LessThanOrEqual, MoreThanOrEqual, Repository} from 'typeorm';
 import {InjectRepository} from '@nestjs/typeorm';
-import {formDailyReportData, formMessage, formTopGainersMessage} from './utils/utilities';
+import {
+  checkIfDeployerDeployedRugPulls,
+  formDailyReportData,
+  formMessage,
+  formTopGainersMessage
+} from './utils/utilities';
+import {Hash} from 'viem';
 
 @Injectable()
 export class EthereumService implements OnModuleInit {
   private readonly API_KEY = this.configService.get<string>('bot.apiKeyMainnet');
   private readonly API_KEY_ETHERSCAN = this.configService.get<string>('bot.apiKeyEtherscan');
   private readonly CHAIN_BASE_API_KEY = this.configService.get<string>('bot.chainBaseApiKey');
-  private readonly provider: ethers.WebSocketProvider;
+  private readonly WETH = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2";
+  private readonly logger = new Logger(EthereumService.name);
+  private readonly provider: ethers.JsonRpcProvider;
   private uniswapFactoryContract: ethers.Contract;
   private factoryABI = uniswapAbi;
   private uniswapFactoryAddress = "0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f";
-  private readonly WETH = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2";
   private fakeTokenAbi = unverifiedTokenFakeABI;
-  // private wsProviderUrl = `wss://eth-mainnet.alchemyapi.io/v2/${this.API_KEY}`;
-  private wsProviderUrl = `wss://mainnet.infura.io/ws/v3/${this.API_KEY}`;
-  private readonly logger = new Logger(EthereumService.name);
-  private boundPairCreatedListener: any;
+  private lastPairCreatedEventTransactionHash: string;
+  private httpProviderUrl = `https://mainnet.infura.io/v3/${this.API_KEY}`;
+
 
   constructor(
     @Inject(forwardRef(() => WalletBotService))
@@ -40,14 +46,20 @@ export class EthereumService implements OnModuleInit {
     private tokenRepository: Repository<Token>,
 
   ) {
-    this.provider = new ethers.WebSocketProvider(this.wsProviderUrl);
+    console.log("constructor");
+    this.provider = new ethers.JsonRpcProvider(this.httpProviderUrl);
+    // this.httpProvider = new ethers.JsonRpcProvider(this.httpProviderUrl);
     this.uniswapFactoryContract = new ethers.Contract(this.uniswapFactoryAddress, this.factoryABI, this.provider);
-    this.listenForPairCreated();
+    // this.listenForPairCreated();
   }
 
   async onModuleInit() {
-
+    console.log('On module init');
+    this.lastPairCreatedEventTransactionHash = await this.fetchLastPairCreatedEventTransactionHash();
+    console.log('Last Pair Created Event:', this.lastPairCreatedEventTransactionHash);
+    this.poll();
   }
+
   @Cron('0 1-23 * * *') // This cron expression means "at minute 0 of every hour"
   async scheduleTopGainersPost() {
     try{
@@ -94,6 +106,58 @@ export class EthereumService implements OnModuleInit {
     }
   }
 
+  async fetchLastPairCreatedEventTransactionHash() {
+    const latestBlock = await this.provider.getBlockNumber();
+    const fromBlock = Math.max(0, latestBlock - 6000); // Look back ~6000 blocks (~1 day on Ethereum) to start, adjust based on expected event frequency
+    const filter = this.uniswapFactoryContract.filters.PairCreated();
+
+    const events = await this.uniswapFactoryContract.queryFilter(filter, fromBlock, latestBlock);
+
+    if (events.length === 0) {
+      console.log('No PairCreated events found in the last 6000 blocks.');
+      return null; // Or handle this scenario as needed
+    }
+
+    // Events are returned in chronological order, so the last one in the array is the most recent
+    const latestEvent = events[events.length - 1];
+
+
+    console.log('Latest PairCreated event:', latestEvent);
+    return latestEvent.transactionHash; // Or process as needed
+  }
+
+  async poll() {
+    while (true) {
+      try {
+        const latestBlock = await this.provider.getBlockNumber();
+        const fromBlock = Math.max(0, latestBlock - 2000); // Adjust based on expected frequency of events
+        const filter = this.uniswapFactoryContract.filters.PairCreated();
+        const events = await this.uniswapFactoryContract.queryFilter(filter, fromBlock, latestBlock);
+
+        // Find the index of the last processed event
+        const lastIndex = events.findIndex(event => event.transactionHash === this.lastPairCreatedEventTransactionHash);
+
+        // If lastIndex is -1, none of the events match the last processed event's transaction hash,
+        // which means either all the events are new or the last processed event is not in the retrieved events.
+        // So we should process events only if lastIndex is not the last element.
+        // If lastIndex is not -1, slice the array from the element after the last processed one.
+        const newEvents = lastIndex === -1 ? events : events.slice(lastIndex + 1);
+
+        if (newEvents.length > 0) {
+          // Process all new events in parallel
+          await Promise.all(newEvents.map(event => this.processPairCreatedEvent(event)));
+
+          // Update the last processed transaction hash to the hash of the last event
+          this.lastPairCreatedEventTransactionHash = newEvents[newEvents.length - 1].transactionHash;
+        }
+      } catch (error) {
+        console.error('Error polling PairCreated events:', error);
+      }
+      await new Promise(resolve => setTimeout(resolve, 5000)); // Wait for 5 seconds before polling again
+    }
+  };
+
+
   private async retryWithExponentialBackoff<T>(operation: () => Promise<T>, maxRetries: number = 5, initialDelay: number = 1000): Promise<T> {
     for (let attempt = 0; attempt < maxRetries; attempt++) {
       try {
@@ -109,127 +173,134 @@ export class EthereumService implements OnModuleInit {
     throw new Error('Operation failed after maximum retries.');
   }
 
-  private async listenForPairCreated() {
-    this.logger.log("Listening for PairCreated events");
+  private async processPairCreatedEvent(event) {
+    const token0 = event.args[0];
+    const token1 = event.args[1];
+    const pair = event.args[2];
+    console.log(`Pair Created: ${pair}`);
+    console.log(`Token0: ${token0}`);
+    console.log(`Token1: ${token1}`);
+    const newTokenAddress = token0 === this.WETH ? token1 : token0;
+    try {
+      const ethPrice = await this.getETHPrice();
+      const initialLiquidity = await this.fetchInitialLiquidity(pair);
+      let isContractVerified = true;
+      let newTokenContractABI: string | Interface | InterfaceAbi = await this.fetchContractABI(newTokenAddress);
+      console.log('Initial Liquidity:', initialLiquidity);
 
-    this.uniswapFactoryContract.on('PairCreated', async (token0, token1, pair, event) => {
-      console.log(`Pair Created: ${pair}`);
-      console.log(`Token0: ${token0}`);
-      console.log(`Token1: ${token1}`);
-      const newTokenAddress = token0 === this.WETH ? token1 : token0;
-      try {
-        const ethPrice = await this.getETHPrice();
-        const initialLiquidity = await this.fetchInitialLiquidity(pair);
-        let isContractVerified = true;
-        let newTokenContractABI: string | Interface | InterfaceAbi = await this.fetchContractABI(newTokenAddress);
-        console.log('Initial Liquidity:', initialLiquidity);
-
-        if (!newTokenContractABI) {
-          console.log('Token ABI not found. Most probably token contract unverified. Using fake ABI');
-          isContractVerified = false;
-          newTokenContractABI = this.fakeTokenAbi;
-        }
-
-        const newTokenContract = new ethers.Contract(newTokenAddress, newTokenContractABI, this.provider);
-        const name = await newTokenContract.name();
-        const symbol = await newTokenContract.symbol();
-        const decimals = await newTokenContract.decimals();
-        const supplyBigInt = await newTokenContract.totalSupply()
-        const supply = Number(ethers.formatUnits(supplyBigInt, decimals));
-        const wethAmountBigInt = await this.getBalanceOfToken(this.WETH, pair);
-        const wethAmount = Number(ethers.formatUnits(wethAmountBigInt, 18));
-        const newTokenAmountBigInt = await this.getBalanceOfToken(newTokenAddress, pair);
-        const newTokenAmount = Number(ethers.formatUnits(newTokenAmountBigInt, decimals));
-        let initialTokenPrice = 0;
-        if (wethAmount > 0) {
-          initialTokenPrice = wethAmount / newTokenAmount;
-        }
-        console.log(`Initial Token Price: ${initialTokenPrice}`);
-
-        let urls: URLS | null = null;
-        let buyTax = null;
-        let sellTax = null;
-        let owner = null;
-
-        const sourceCode = isContractVerified ? await this.fetchContractSourceCode(newTokenAddress) : null;
-        if (sourceCode) {
-          urls = this.extractAndSaveUrls(sourceCode);
-          const buySellTax = this.extractTaxRates(sourceCode);
-          buyTax = buySellTax.buyTax;
-          sellTax = buySellTax.sellTax;
-          owner = await this.getContractOwner(newTokenContract);
-        }
-        console.log(`WETH Amount: ${wethAmount}`);
-        console.log(`New Token Amount: ${newTokenAmount}`);
-        console.log(`Total Supply: ${supply}`);
-        console.log(`Token Name: ${name}`);
-        console.log(`Token Symbol: ${symbol}`);
-        console.log(`Decimals: ${decimals}`);
-
-        await this.delay(60000 ) // wait for 1 minute before processing the event
-
-        const dexScreenerData = await this.getDexScreenerData(newTokenAddress);
-        const tokenHolders = await this.getTokenHolders(newTokenAddress);
-        const deployerAddress = await this.findDeployerAddress(newTokenAddress);
-        console.log('Deployer Address:', deployerAddress);
-        console.log('DexScreener Data:');
-        console.log("Token holders:", tokenHolders.count);
-
-        const newMessageData = {
-          newTokenAddress,
-          name,
-          symbol,
-          decimals,
-          urls,
-          buyTax,
-          sellTax,
-          owner,
-          totalSupply: supply,
-          wethAmount,
-          dexScreenerData,
-          deployerAddress,
-          tokenHoldersCount: tokenHolders?.count
-        };
-
-        const message = formMessage(newMessageData);
-        let photoBuffer = null;
-        let imageUrl = null;
-        if(urls && urls.tg) {
-          photoBuffer = await this.walletBotService
-            .getImageBufferFromTgChannel(urls.tg);
-        }
-        if (urls && urls.website && !photoBuffer) {
-          imageUrl = await this.fetchPreviewImageFromHtml(urls.website);
-        }
-        console.log("Urls for preview Image:", urls);
-        const messageId = await this.walletBotService.notifyAboutNewPair(
-          message,
-          imageUrl,
-          photoBuffer,
-          newTokenAddress,
-          pair
-        );
-
-        const newToken = {
-          tokenAddress: newTokenAddress,
-          pairAddress: pair,
-          deployerAddress,
-          initialTokenPriceNative: dexScreenerData ? dexScreenerData.priceNative : null,
-          currentTokenPriceNative: dexScreenerData ? dexScreenerData.priceNative : null,
-          tokenName: name,
-          tokenSymbol: symbol,
-          tokenInitialLiquidity: wethAmount,
-          isDexScreenAvailable: !!dexScreenerData,
-          byuTax: buyTax,
-          sellTax: sellTax,
-          isRugPull: false,
-          messageId
-        }
-        await this.createToken(newToken);
-      } catch (error) {
-        console.error('Error retrieving token details:', error);
+      if (!newTokenContractABI) {
+        console.log('Token ABI not found. Most probably token contract unverified. Using fake ABI');
+        isContractVerified = false;
+        newTokenContractABI = this.fakeTokenAbi;
       }
-    });
+
+      const newTokenContract = new ethers.Contract(newTokenAddress, newTokenContractABI, this.provider);
+      const name = await newTokenContract.name();
+      const symbol = await newTokenContract.symbol();
+      const decimals = await newTokenContract.decimals();
+      const supplyBigInt = await newTokenContract.totalSupply()
+      const supply = Number(ethers.formatUnits(supplyBigInt, decimals));
+      const wethAmountBigInt = await this.getBalanceOfToken(this.WETH, pair);
+      const wethAmount = Number(ethers.formatUnits(wethAmountBigInt, 18));
+      const newTokenAmountBigInt = await this.getBalanceOfToken(newTokenAddress, pair);
+      const newTokenAmount = Number(ethers.formatUnits(newTokenAmountBigInt, decimals));
+      let initialTokenPrice = 0;
+      if (wethAmount > 0) {
+        initialTokenPrice = wethAmount / newTokenAmount;
+      }
+      console.log(`Initial Token Price: ${initialTokenPrice}`);
+
+      let urls: URLS | null = null;
+      let buyTax = null;
+      let sellTax = null;
+      let owner = null;
+
+      const sourceCode = isContractVerified ? await this.fetchContractSourceCode(newTokenAddress) : null;
+      if (sourceCode) {
+        urls = this.extractAndSaveUrls(sourceCode);
+        const buySellTax = this.extractTaxRates(sourceCode);
+        buyTax = buySellTax.buyTax;
+        sellTax = buySellTax.sellTax;
+        owner = await this.getContractOwner(newTokenContract);
+      }
+      console.log(`WETH Amount: ${wethAmount}`);
+      console.log(`New Token Amount: ${newTokenAmount}`);
+      console.log(`Total Supply: ${supply}`);
+      console.log(`Token Name: ${name}`);
+      console.log(`Token Symbol: ${symbol}`);
+      console.log(`Decimals: ${decimals}`);
+
+      await this.delay(60000 ) // wait for 1 minute before processing the event
+
+      const dexScreenerData = await this.getDexScreenerData(newTokenAddress);
+      const tokenHolders = await this.getTokenHolders(newTokenAddress);
+      const deployerAddress = await this.findDeployerAddress(newTokenAddress);
+      const deployerDeployedRugsQuantity = await checkIfDeployerDeployedRugPulls(
+        deployerAddress,
+        this.tokenRepository
+      );
+
+      console.log('Deployer Address:', deployerAddress);
+      console.log('DexScreener Data:');
+      console.log("Token holders:", tokenHolders.count);
+      console.log("Rugs deployed buy deployer address", deployerDeployedRugsQuantity)
+
+      const newMessageData = {
+        newTokenAddress,
+        name,
+        symbol,
+        decimals,
+        urls,
+        buyTax,
+        sellTax,
+        owner,
+        totalSupply: supply,
+        wethAmount,
+        dexScreenerData,
+        deployerAddress,
+        tokenHoldersCount: tokenHolders?.count,
+        deployerDeployedRugsQuantity
+      };
+
+
+      const message = formMessage(newMessageData);
+      let photoBuffer = null;
+      let imageUrl = null;
+      if(urls && urls.tg) {
+        photoBuffer = await this.walletBotService
+          .getImageBufferFromTgChannel(urls.tg);
+      }
+      if (urls && urls.website && !photoBuffer) {
+        imageUrl = await this.fetchPreviewImageFromHtml(urls.website);
+      }
+      console.log("Urls for preview Image:", urls);
+      const messageId = await this.walletBotService.notifyAboutNewPair(
+        message,
+        imageUrl,
+        photoBuffer,
+        newTokenAddress,
+        pair
+      );
+
+      const newToken = {
+        tokenAddress: newTokenAddress,
+        pairAddress: pair,
+        deployerAddress,
+        initialTokenPriceNative: dexScreenerData ? dexScreenerData.priceNative : null,
+        currentTokenPriceNative: dexScreenerData ? dexScreenerData.priceNative : null,
+        tokenName: name,
+        tokenSymbol: symbol,
+        tokenInitialLiquidity: wethAmount,
+        isDexScreenAvailable: !!dexScreenerData,
+        byuTax: buyTax,
+        sellTax: sellTax,
+        isRugPull: false,
+        messageId
+      }
+      await this.createToken(newToken);
+    } catch (error) {
+      console.error('Error retrieving token details:', error);
+    }
   }
 
   private async delay(milliseconds: number): Promise<void> {
@@ -691,7 +762,7 @@ export class EthereumService implements OnModuleInit {
 
         for (let token of batchTokens) {
           const matchingPair = tokensCurrentData.data?.pairs.find(pair => pair.pairAddress === token.pairAddress);
-          if (matchingPair && matchingPair?.liquidity?.usd < 500) {
+          if (matchingPair && matchingPair?.liquidity?.usd < 1000) {
             token.isRugPull = true;
           }
         }

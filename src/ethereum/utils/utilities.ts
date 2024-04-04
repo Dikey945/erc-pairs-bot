@@ -1,4 +1,6 @@
 import {MessageData, TokenGainersData} from './types';
+import {Token} from '../../entities/token.entity';
+import {Repository} from 'typeorm';
 
 export const formMessage = (messageData: MessageData): string =>  {
   const {
@@ -12,7 +14,8 @@ export const formMessage = (messageData: MessageData): string =>  {
     totalSupply,
     dexScreenerData,
     deployerAddress,
-    tokenHoldersCount
+    tokenHoldersCount,
+    deployerDeployedRugsQuantity,
   } = messageData;
 
   const isBuySellTax = buyTax !== undefined
@@ -68,6 +71,10 @@ if (dexScreenerData) {
   message += `📈 Buys: ${m5Txns.buys} \n` +
     `📉 Sells: ${m5Txns.sells} \n\n`;
 }
+
+if (deployerDeployedRugsQuantity > 0) {
+  message += `🚨 *${deployerDeployedRugsQuantity}* rugs deployed by this deployer address\n\n`;
+}
 return message.trim();
 }
 
@@ -93,4 +100,22 @@ export const formDailyReportData = (
   message += `🔵 LAUNCHED: ${totalTokens}\n🟢 SUCCESSFULLY: ${successfulTokens}\n🔴 RUG PULLS: ${rugPulls}\n\n`;
   message += formTopGainersMessage(topGainers);
   return message;
+}
+
+export const checkIfDeployerDeployedRugPulls = async (
+  deployerAddress: string,
+  tokenRepository: Repository<Token>
+): Promise<number> => {
+  try {
+    const tokens = await tokenRepository.find({
+      where: {
+        isRugPull: true,
+        deployerAddress
+      }
+    });
+
+    return tokens.length
+  } catch (error) {
+    console.error('Error checking if deployer deployed rug pulls:', error);
+  }
 }

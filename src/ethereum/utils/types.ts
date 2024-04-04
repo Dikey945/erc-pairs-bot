@@ -28,6 +28,7 @@ export interface MessageData {
   dexScreenerData?: Pair
   deployerAddress?: string;
   tokenHoldersCount?: number;
+  deployerDeployedRugsQuantity?: number;
 }
 
 export interface Pair {
